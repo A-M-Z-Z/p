@@ -644,7 +644,7 @@ $usagePercentage = ($userQuota > 0) ? ($currentUsage / $userQuota) * 100 : 0;
         </div>
         <h1>CloudBOX</h1>
         <div class="search-bar">
-            <input type="text" placeholder="Search files and folders..." class="form-control">
+<input type="text" placeholder="Search files and folders..." class="form-control" id="searchInput" oninput="searchItems()">
         </div>
     </div>
     
@@ -1002,6 +1002,83 @@ $usagePercentage = ($userQuota > 0) ? ($currentUsage / $userQuota) * 100 : 0;
                     console.error('Error:', error);
                 });
         }
+        // Fonction pour rechercher dans les fichiers et dossiers
+function searchItems() {
+    const searchText = document.getElementById('searchInput').value.toLowerCase();
+    const items = document.querySelectorAll('.item');
+    const folderSections = document.querySelectorAll('.section-header:has(.fa-folder)');
+    const fileSections = document.querySelectorAll('.section-header:has(.fa-file)');
+    
+    // Si la recherche est vide, afficher tous les éléments
+    if (searchText.trim() === '') {
+        items.forEach(item => {
+            item.style.display = 'flex';
+        });
+        
+        // Réafficher les titres de section
+        document.querySelectorAll('.section-header').forEach(header => {
+            header.style.display = 'flex';
+        });
+        
+        // Supprimer le message "pas de résultats" s'il existe
+        const noResultsMsg = document.getElementById('noResultsMsg');
+        if (noResultsMsg) noResultsMsg.remove();
+        
+        return;
+    }
+    
+    // Compteurs pour les éléments trouvés
+    let foundFolders = 0;
+    let foundFiles = 0;
+    
+    // Filtrer les éléments
+    items.forEach(item => {
+        const nameElement = item.querySelector('.name');
+        if (!nameElement) return;
+        
+        const itemName = nameElement.textContent.toLowerCase();
+        const folderIcon = item.querySelector('.folder-icon');
+        const isFolder = folderIcon !== null;
+        
+        if (itemName.includes(searchText)) {
+            item.style.display = 'flex';
+            if (isFolder) foundFolders++;
+            else foundFiles++;
+        } else {
+            item.style.display = 'none';
+        }
+    });
+    
+    // Gérer l'affichage des titres de section
+    const allSections = document.querySelectorAll('.section-header');
+    allSections.forEach(section => {
+        const nextGrid = section.nextElementSibling;
+        if (!nextGrid || !nextGrid.classList.contains('container-grid')) return;
+        
+        // Vérifier si la section contient des dossiers ou des fichiers
+        const hasVisibleItems = Array.from(nextGrid.querySelectorAll('.item')).some(
+            item => item.style.display !== 'none'
+        );
+        
+        section.style.display = hasVisibleItems ? 'flex' : 'none';
+    });
+    
+    // Afficher un message si aucun résultat n'est trouvé
+    let noResultsMsg = document.getElementById('noResultsMsg');
+    if (foundFolders === 0 && foundFiles === 0) {
+        if (!noResultsMsg) {
+            const msg = document.createElement('div');
+            msg.id = 'noResultsMsg';
+            msg.className = 'alert alert-info mt-4';
+            msg.innerHTML = '<i class="fas fa-search me-2"></i> No files or folders found matching "' + searchText + '"';
+            document.querySelector('main').appendChild(msg);
+        }
+    } else if (noResultsMsg) {
+        noResultsMsg.remove();
+    }
+    
+    console.log(`Search results: ${foundFolders} folders, ${foundFiles} files found for "${searchText}"`);
+}
     </script>
 </body>
 </html>
