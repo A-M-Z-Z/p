@@ -21,6 +21,79 @@ $username = $_SESSION['username'];
 $userid = $_SESSION['user_id'];
 $messages = [];
 
+// Preview file content
+function previewFile($fileId, $conn, $userId) {
+    // Récupérer les informations du fichier
+    $stmt = $conn->prepare("SELECT f.filename, f.file_type, fc.content 
+                        FROM files f 
+                        JOIN file_content fc ON f.id = fc.file_id 
+                        WHERE f.id = ? AND f.user_id = ?");
+    $stmt->bind_param("ii", $fileId, $userId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows === 0) {
+        return ['success' => false, 'message' => 'File not found or access denied'];
+    }
+
+    $file = $result->fetch_assoc();
+
+    // Vérifier si le fichier est prévisualisable
+    $previewableTypes = [
+        'text/plain', 'text/html', 'text/css', 'text/javascript',
+        'application/json', 'application/xml', 'application/javascript',
+        'text/markdown', 'text/x-python', 'text/x-php'
+    ];
+
+    $isPreviewable = false;
+    foreach ($previewableTypes as $type) {
+        if (strpos($file['file_type'], $type) === 0) {
+            $isPreviewable = true;
+            break;
+        }
+    }
+
+    if (!$isPreviewable) {
+        return ['success' => false, 'message' => 'This file type cannot be previewed'];
+    }
+
+    // Limiter la taille du contenu prévisualisé
+    $maxPreviewSize = 100 * 1024; // 100 KB
+    $content = $file['content'];
+    $isTruncated = false;
+
+    if (strlen($content) > $maxPreviewSize) {
+        $content = substr($content, 0, $maxPreviewSize);
+        $isTruncated = true;
+    }
+
+    // Encoder le contenu pour éviter les problèmes de caractères spéciaux
+    $content = htmlspecialchars($content);
+
+    // Ajouter un message si le contenu a été tronqué
+    if ($isTruncated) {
+        $content .= "\n\n[File content truncated. Download the full file to view the complete content.]";
+    }
+
+    return [
+        'success' => true,
+        'filename' => $file['filename'],
+        'file_type' => $file['file_type'],
+        'content' => $content,
+        'truncated' => $isTruncated
+    ];
+}
+
+// Traiter la demande de prévisualisation si c'est une requête AJAX
+if (isset($_GET['preview_id']) && is_numeric($_GET['preview_id'])) {
+    $previewId = intval($_GET['preview_id']);
+    $previewData = previewFile($previewId, $conn, $userid);
+    
+    header('Content-Type: application/json');
+    echo json_encode($previewData);
+    exit();
+}
+
 // Calculate current storage usage
 $storageQuery = $conn->prepare("SELECT SUM(file_size) as total_used FROM files WHERE user_id = ?");
 $storageQuery->bind_param("i", $userid);
@@ -694,17 +767,6 @@ $usagePercentage = ($userQuota > 0) ? ($currentUsage / $userQuota) * 100 : 0;
                     </div>
                     <div class="name"><?= htmlspecialchars($folder['folder_name']) ?></div>
                     <div class="actions">
-                        <a href="download.php?id=<?= $file['id'] ?>" class="btn btn-sm btn-primary btn-action">
-                            <i class="fas fa-download me-1"></i> Download
-                        </a>
-                        <?php if(strpos($file['file_type'], 'text/') === 0 || 
-                                 strpos($file['file_type'], 'application/json') === 0 ||
-                                 strpos($file['file_type'], 'application/xml') === 0 ||
-                                 strpos($file['file_type'], 'application/javascript') === 0): ?>
-                        <a href="#" class="btn btn-sm btn-info btn-action" onclick="previewFile(<?= $file['id'] ?>)">
-                            <i class="fas fa-eye me-1"></i> Preview
-                        </a>
-                        <?php endif; ?>
                         <a href="home.php?folder_id=<?= $folder['id'] ?>" class="btn btn-sm btn-primary btn-action">
                             <i class="fas fa-folder-open me-1"></i> Open
                         </a>
@@ -714,11 +776,6 @@ $usagePercentage = ($userQuota > 0) ? ($currentUsage / $userQuota) * 100 : 0;
                         <a href="home.php?delete_folder=<?= $folder['id'] ?><?= $current_folder_id ? '&folder_id='.$current_folder_id : '' ?>" 
                            class="btn btn-sm btn-danger btn-action" 
                            onclick="return confirm('Are you sure you want to delete this folder?');">
-                            <i class="fas fa-trash"></i>
-                        </a>
-                        <a href="home.php?delete_id=<?= $file['id'] ?><?= $current_folder_id ? '&folder_id='.$current_folder_id : '' ?>" 
-                           class="btn btn-sm btn-danger btn-action" 
-                           onclick="return confirm('Are you sure you want to delete this file?');">
                             <i class="fas fa-trash"></i>
                         </a>
                     </div>
@@ -760,4 +817,191 @@ $usagePercentage = ($userQuota > 0) ? ($currentUsage / $userQuota) * 100 : 0;
                     <div class="name"><?= preg_replace('/^(\d+_)+/', '', $file['filename']) ?></div>
                     <div class="file-details"><?= number_format($file['file_size'] / 1024, 2) ?> KB</div>
                     <div class="actions">
+                        <a href="download.php?id=<?= $file['id'] ?>" class="btn btn-sm btn-primary btn-action">
+                            <i class="fas fa-download me-1"></i> Download
+                        </a>
+                        <?php if(strpos($file['file_type'], 'text/') === 0 || 
+                                 strpos($file['file_type'], 'application/json') === 0 ||
+                                 strpos($file['file_type'], 'application/xml') === 0 ||
+                                 strpos($file['file_type'], 'application/javascript') === 0): ?>
+                        <a href="#" class="btn btn-sm btn-info btn-action" onclick="previewFile(<?= $file['id'] ?>)">
+                            <i class="fas fa-eye me-1"></i> Preview
+                        </a>
+                        <?php endif; ?>
+                        <a href="home.php?delete_id=<?= $file['id'] ?><?= $current_folder_id ? '&folder_id='.$current_folder_id : '' ?>" 
+                           class="btn btn-sm btn-danger btn-action" 
+                           onclick="return confirm('Are you sure you want to delete this file?');">
+                            <i class="fas fa-trash"></i>
+                        </a>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+        
+        <?php if (empty($folders) && empty($files)): ?>
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle me-2"></i> This folder is empty. Upload files or create folders to get started.
+            </div>
+        <?php endif; ?>
+    </main>
+
+    <!-- Modal pour la prévisualisation des fichiers -->
+    <div class="modal fade" id="previewModal" tabindex="-1" aria-labelledby="previewModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="previewModalLabel">File Preview</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="text-center mb-3" id="previewLoader">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading file content...</p>
+                    </div>
+                    <pre id="fileContent" class="bg-light p-3 rounded" style="max-height: 500px; overflow: auto; display: none;"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <a href="#" id="downloadPreviewBtn" class="btn btn-primary">Download</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // File and folder upload handling
+        const dragArea = document.getElementById('drag-area');
+        const fileInput = document.getElementById('file-input');
+        const uploadForm = document.getElementById('upload-form');
+        
+        // Highlight drag area when item is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dragArea.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dragArea.classList.add('active');
+            });
+        });
+        
+        // Remove highlight when item leaves the drag area
+        ['dragleave', 'drop'].forEach(eventName => {
+            dragArea.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dragArea.classList.remove('active');
+            });
+        });
+        
+        // Handle file drop
+        dragArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            
+            // Get files from the drop event
+            const files = e.dataTransfer.files;
+            
+            // Add files to the file input
+            if (files.length > 0) {
+                fileInput.files = files;
+                uploadFiles();
+            }
+        });
+        
+        // Handle file selection
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                uploadFiles();
+            }
+        });
+        
+        // Function to upload files
+        function uploadFiles() {
+            // Show loading indicator or message
+            const loadingToast = document.createElement('div');
+            loadingToast.className = 'alert alert-info';
+            loadingToast.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Uploading files, please wait...';
+            document.querySelector('main').prepend(loadingToast);
+            
+            // Submit the form
+            uploadForm.submit();
+        }
+        
+        // Function to allow folder selection
+        function selectFolder() {
+            // Create a temporary input element for folder selection
+            const folderInput = document.createElement('input');
+            folderInput.type = 'file';
+            folderInput.webkitdirectory = true; // For Chrome and Safari
+            folderInput.directory = true; // For Firefox
+            folderInput.multiple = true; // Multiple files from folder
+            
+            // Handle folder selection
+            folderInput.addEventListener('change', () => {
+                if (folderInput.files.length > 0) {
+                    // Transfer files to the main file input
+                    // This is a workaround since we can't directly set files property
+                    const dataTransfer = new DataTransfer();
+                    
+                    for (let i = 0; i < folderInput.files.length; i++) {
+                        dataTransfer.items.add(folderInput.files[i]);
+                    }
+                    
+                    fileInput.files = dataTransfer.files;
+                    uploadFiles();
+                }
+            });
+            
+            // Trigger folder selection dialog
+            folderInput.click();
+        }
+        
+        // Fonction pour prévisualiser les fichiers texte
+        function previewFile(fileId) {
+            const modal = new bootstrap.Modal(document.getElementById('previewModal'));
+            const previewLoader = document.getElementById('previewLoader');
+            const fileContent = document.getElementById('fileContent');
+            const downloadBtn = document.getElementById('downloadPreviewBtn');
+            const modalTitle = document.getElementById('previewModalLabel');
+            
+            // Réinitialiser le modal
+            fileContent.style.display = 'none';
+            previewLoader.style.display = 'block';
+            fileContent.textContent = '';
+            downloadBtn.href = `download.php?id=${fileId}`;
+            
+            // Afficher le modal
+            modal.show();
+            
+            // Récupérer le contenu du fichier
+            fetch(`home.php?preview_id=${fileId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Mettre à jour le titre avec le nom du fichier
+                        modalTitle.textContent = `Preview: ${data.filename}`;
                         
+                        // Afficher le contenu
+                        fileContent.textContent = data.content;
+                        
+                        // Cacher le loader et afficher le contenu
+                        previewLoader.style.display = 'none';
+                        fileContent.style.display = 'block';
+                    } else {
+                        fileContent.textContent = 'Error loading file: ' + data.message;
+                        fileContent.style.display = 'block';
+                        previewLoader.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    fileContent.textContent = 'An error occurred while loading the file.';
+                    fileContent.style.display = 'block';
+                    previewLoader.style.display = 'none';
+                    console.error('Error:', error);
+                });
+        }
+    </script>
+</body>
+</html>
